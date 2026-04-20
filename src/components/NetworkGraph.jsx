@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import NodeDetailPanel from './NodeDetailPanel';
+import QueryPanel from './QueryPanel';
 
-export default function NetworkGraph() {
+export default function NetworkGraph({ focusId, onFocusHandled }) {
   const svgRef = useRef(null);
   const simulationRef = useRef(null);
   const gRef = useRef(null);
   const zoomRef = useRef(null);
   const svgSelRef = useRef(null);
+  const searchRef = useRef(null);
 
   const [data, setData] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -15,6 +17,27 @@ export default function NetworkGraph() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+
+  // Keyboard shortcuts scoped to this view: "/" focuses search, Esc clears, "E" exports.
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName;
+      const typingInField = tag === 'INPUT' || tag === 'TEXTAREA';
+      if (typingInField) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        setSelectedNode(null);
+        resetGraphStyles();
+      } else if (e.key === 'e' || e.key === 'E') {
+        exportPng();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, networkType]);
 
   // -------- GEO role normalization (FIXED v2) --------
   function normalizeGeo(networkData) {
@@ -240,6 +263,75 @@ export default function NetworkGraph() {
     }, 50);
   };
 
+  const openNodeById = (id) => {
+    if (!id || !data) return false;
+    const node = data.nodes.find(n => n.id === id)
+      || data.nodes.find(n => n.id.replace(/\s*\[(S|T)\]$/i, '') === id);
+    if (!node) return false;
+    handleSearchSelect(node);
+    return true;
+  };
+
+  // If the host app asked us to focus a node, do it once data + simulation are ready.
+  useEffect(() => {
+    if (!focusId || !data) return;
+    const t = setTimeout(() => {
+      const ok = openNodeById(focusId);
+      // If the node isn't in the current view (e.g. a country on the sector graph),
+      // try switching to the geo graph where country nodes live.
+      if (!ok && networkType !== 'geo') {
+        setNetworkType('geo');
+        return; // re-run once geo data loads
+      }
+      onFocusHandled?.();
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, data]);
+
+  // Export the current SVG canvas to a PNG.
+  const exportPng = async () => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const width  = svgEl.clientWidth  || svgEl.viewBox.baseVal?.width  || 1600;
+    const height = svgEl.clientHeight || svgEl.viewBox.baseVal?.height || 900;
+    const clone = svgEl.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', width);
+    clone.setAttribute('height', height);
+    // Inline a dark background so PNG looks right against any viewer.
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('width', '100%');
+    bg.setAttribute('height', '100%');
+    bg.setAttribute('fill', '#0B1016');
+    clone.insertBefore(bg, clone.firstChild);
+    const svgStr = new XMLSerializer().serializeToString(clone);
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = width * 2;
+      canvas.height = height * 2;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(2, 2);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(svgUrl);
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `cyber-terror-${networkType}-${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, 'image/png');
+    };
+    img.src = svgUrl;
+  };
+
   // ---------------------------- Graph Interactions ----------------------------
   const highlightConnections = (sel) => {
     if (!data) return;
@@ -258,16 +350,7 @@ export default function NetworkGraph() {
       .attr('stroke-opacity', l => {
         const s = typeof l.source === 'object' ? l.source.id : l.source;
         const t = typeof l.target === 'object' ? l.target.id : l.target;
-        if (loading) return (
-    <div className="loading">
-      <div>LOADING {networkType.toUpperCase()} NETWORK…</div>
-      <div style={{fontSize: '12px', marginTop: '8px', color: '#9AA8B7'}}>
-        Check console if this takes too long
-      </div>
-    </div>
-  );
-
-  return (s === sel.id || t === sel.id) ? 0.85 : 0.05;
+        return (s === sel.id || t === sel.id) ? 0.85 : 0.05;
       })
       .attr('stroke-width', l => {
         const s = typeof l.source === 'object' ? l.source.id : l.source;
@@ -308,7 +391,7 @@ export default function NetworkGraph() {
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const width = (window.innerWidth - 80);
-    const height = (window.innerHeight - 220);
+    const height = (window.innerHeight - 280);
     const dx = Math.max(1, (maxX - minX));
     const dy = Math.max(1, (maxY - minY));
     const scale = Math.min(4, 0.9 / Math.max(dx / (width - padding*2), dy / (height - padding*2)));
@@ -359,7 +442,7 @@ export default function NetworkGraph() {
     d3.select(svgRef.current).selectAll('*').remove();
 
     const width = window.innerWidth - 80;
-    const height = window.innerHeight - 220;
+    const height = window.innerHeight - 280;
 
     const svg = d3.select(svgRef.current)
       .attr('width', width)
@@ -419,11 +502,11 @@ export default function NetworkGraph() {
       .attr('stroke-width', 2)
       .style('cursor', 'pointer')
       .on('click', (event, d) => { setSelectedNode(d); highlightConnections(d); })
-      .on('mouseover', function(event, d) {
+      .on('mouseover', function() {
         d3.select(this).transition().duration(160)
           .attr('stroke', '#96A6B8').attr('stroke-width', 3);
       })
-      .on('mouseout', function(event, d) {
+      .on('mouseout', function() {
         d3.select(this).transition().duration(160)
           .attr('stroke', '#0C1117').attr('stroke-width', 2);
       });
@@ -484,28 +567,41 @@ export default function NetworkGraph() {
 
   return (
     <div className="network-container">
+      {loading && (
+        <div className="graph-loading-overlay">
+          <div>LOADING {networkType.toUpperCase()} NETWORK…</div>
+          <div style={{ fontSize: '12px', marginTop: '8px', color: '#9AA8B7' }}>
+            Check console if this takes too long
+          </div>
+        </div>
+      )}
       <div className="header">
         <div className="header-top">
           <h1>CYBER ATTRIBUTION NETWORK</h1>
-          <div className="header-subtitle">2000 — 2020</div>
+          <div className="header-subtitle">
+            {networkType === 'sector' ? 'SECTOR GRAPH' : 'GEOGRAPHIC GRAPH'}
+            {data ? ` · ${data.nodes.length} nodes · ${data.links.length} edges` : ''}
+          </div>
           <div className="header-line"></div>
         </div>
 
         <div className="header-controls">
           <div className="search-container">
             <input
+              ref={searchRef}
               type="text"
-              placeholder="SEARCH ENTITIES…"
+              placeholder='SEARCH ENTITIES…   (press "/" to focus)'
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { 
-                  setSearchTerm(''); 
-                  setSearchResults([]); 
-                  resetGraphStyles(); 
+                if (e.key === 'Escape') {
+                  setSearchTerm('');
+                  setSearchResults([]);
+                  resetGraphStyles();
+                  e.target.blur();
                 }
-                if (e.key === 'Enter' && searchResults.length > 0) { 
-                  handleSearchSelect(searchResults[0]); 
+                if (e.key === 'Enter' && searchResults.length > 0) {
+                  handleSearchSelect(searchResults[0]);
                 }
               }}
               className="search-input"
@@ -540,23 +636,31 @@ export default function NetworkGraph() {
           </div>
 
           <div className="controls">
-            <button 
-              className={networkType === 'sector' ? 'active' : ''} 
-              onClick={() => { 
-                setNetworkType('sector'); 
-                setSelectedNode(null); 
+            <button
+              className={networkType === 'sector' ? 'active' : ''}
+              onClick={() => {
+                setNetworkType('sector');
+                setSelectedNode(null);
               }}
             >
               SECTOR VIEW
             </button>
-            <button 
-              className={networkType === 'geo' ? 'active' : ''} 
-              onClick={() => { 
-                setNetworkType('geo'); 
-                setSelectedNode(null); 
+            <button
+              className={networkType === 'geo' ? 'active' : ''}
+              onClick={() => {
+                setNetworkType('geo');
+                setSelectedNode(null);
               }}
             >
               GEOGRAPHIC VIEW
+            </button>
+            <button
+              className="export-btn"
+              onClick={exportPng}
+              disabled={!data}
+              title="Export current graph to PNG (E)"
+            >
+              EXPORT PNG
             </button>
           </div>
         </div>
@@ -583,15 +687,22 @@ export default function NetworkGraph() {
       {selectedNode && (
         <NodeDetailPanel
           node={selectedNode}
-          onClose={() => { 
-            setSelectedNode(null); 
-            resetGraphStyles(); 
+          onClose={() => {
+            setSelectedNode(null);
+            resetGraphStyles();
           }}
         />
       )}
 
+      {data && (
+        <QueryPanel
+          data={data}
+          onResultSelect={(id) => openNodeById(id)}
+        />
+      )}
+
       <div className="instructions">
-        CLICK NODE · DRAG TO REPOSITION · SCROLL TO ZOOM · SEARCH TO FILTER
+        CLICK NODE · DRAG TO REPOSITION · SCROLL TO ZOOM · "/" TO SEARCH · "E" TO EXPORT
       </div>
     </div>
   );
