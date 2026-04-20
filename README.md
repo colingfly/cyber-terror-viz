@@ -1,16 +1,92 @@
-# React + Vite
+# cyber-terror-viz
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+An interactive visualization of state-sponsored cyber incident attribution
+data — sponsors, threat actors, sectors, countries, and the relationships
+between them.
 
-Currently, two official plugins are available:
+**Live:** https://cyber-terror-viz.vercel.app
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## What's inside
 
-## React Compiler
+The app has three views, all keyboard-navigable (`1` / `2` / `3`):
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. **Overview** — a one-page intelligence brief with headline stats, a
+   cumulative-incidents trendline, and rankings (top sponsors, actors,
+   sectors, countries). Clicking any row jumps into the network graph
+   focused on that entity.
+2. **Network** — a D3 force-directed graph of the attribution network.
+   Toggle between the **Sector** graph (sponsors → actors → sectors) and
+   the **Geographic** graph (sponsors → actors → countries). Click a node
+   to open a detail panel with the top related entities; drag to
+   reposition; scroll to zoom.
+3. **Timeline** — a racing bar chart of cumulative attributed incidents by
+   sponsor, 2005–2025. Press play or scrub the year slider.
 
-## Expanding the ESLint configuration
+### Extra niceties
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- **Natural-language query panel** on the network view ("which actors have
+  multiple state sponsors?", "what does China target most?").
+- **Keyboard shortcuts**: `/` focuses search, `Esc` clears selection, `E`
+  exports the current graph to PNG, `1`/`2`/`3` switch tabs.
+- **Shareable URLs**: the active view (and optionally a focused node) is
+  persisted in the URL hash — e.g. `#network/APT%2028`.
+- **PNG export** of the current graph at 2× resolution.
+
+## Data
+
+Four JSON files live in `public/` and drive the app:
+
+| File                     | Used by            | Shape                                                    |
+| ------------------------ | ------------------ | -------------------------------------------------------- |
+| `sector_network.json`    | Network (sector)   | `{ nodes: [{id, type, degree}], links: [{source, target, weight, type}] }` |
+| `geo_network.json`       | Network (geo)      | same shape; geo nodes go through a role-aware normalizer so the same country can appear as both a sponsor and a target without being treated as a single self-looping node |
+| `node_details.json`      | Node detail panel  | `{ [nodeId]: { total_incidents, targets: {name: count}, sources: {name: count} } }` |
+| `sponsor_timeline.json`  | Timeline + Overview | `[{ sponsor, year, cumulative }]` |
+
+The data is open-source and assembled from public attribution reports. It
+is **not** a comprehensive or authoritative record — treat it as a
+research aid, not a source of truth.
+
+## Tech stack
+
+- [Vite](https://vitejs.dev/) + [React 19](https://react.dev/)
+- [D3 v7](https://d3js.org/) for the force-directed graph and racing bars
+- [Recharts](https://recharts.org/) for the overview charts
+- ESLint with `react-hooks` and `react-refresh` plugins
+
+## Development
+
+```bash
+npm install
+npm run dev        # Vite dev server with HMR
+npm run build      # Production build into dist/
+npm run preview    # Serve the production build locally
+npm run lint       # ESLint
+```
+
+## Project layout
+
+```
+src/
+  App.jsx                     # view switcher + URL hash + global shortcuts
+  App.css                     # theme + component styles
+  main.jsx                    # React root
+  components/
+    Nav.jsx                   # top tab bar
+    Overview.jsx              # landing dashboard (stats + trendline + rankings)
+    NetworkGraph.jsx          # D3 force-directed graph
+    NodeDetailPanel.jsx       # per-node drilldown with bar charts
+    QueryPanel.jsx            # natural-language query sidebar
+    RacingBarChart.jsx        # cumulative incidents over time
+public/
+  sector_network.json
+  geo_network.json
+  node_details.json
+  sponsor_timeline.json
+```
+
+## Deployment
+
+This project is wired for Vercel out of the box — `npm run build` emits a
+static `dist/` directory that any static host can serve (Vercel, Netlify,
+GitHub Pages, S3, etc.).
